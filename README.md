@@ -179,7 +179,7 @@ RSA 签名必然失效（无私钥），所以此产物**不能用于执行更�
 
 ---
 
-## 快速开始
+## Fastboot
 
 需要 Python 3.13 + `pycryptodome`（反汇编另需 `capstone`）。
 把官方 `BODYDATA.DAT` 放到仓库根目录（**本仓库不附带固件**）。
