@@ -1,0 +1,22 @@
+# ===== NEVER COMMIT (firmware / images / keys) =====
+BODYDATA*.DAT
+*.DAT
+*.bin
+*.img
+*.raw
+*.so
+*.pem
+
+# ===== local-only (never published) =====
+_work/
+_repro/
+_private/
+backup/
+artifacts/
+
+# ===== standard =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.reports/
