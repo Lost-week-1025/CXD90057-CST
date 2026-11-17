@@ -4,8 +4,118 @@
 
 目标机：Sony ILCE-6700（A6700），固件 **2.00**。
 
-本仓库只做一件事：**把固件外层的封装、校验、加密机制讲清楚，并给出可离线复现的验证器**。
-它不包含固件本体，不提供刷机步骤，也不试图绕过 RSA 私钥。
+## 这个项目要解决什么
+
+**核心问题是救砖**：相机刷坏之后，能不能在没有官方维修的情况下把它救回来。
+
+要做到这件事，必须先回答三个问题：
+
+1. **相机的更新链在哪一步会拦我？** → 识别层 / 执行层分离（本文实测）
+2. **拦我的那道检查，能不能在没有私钥的情况下通过？** → 识别层不验 RSA（真机证实）
+3. **如果我把相机搞坏了，有没有回退的路？** → R0–R4 阶梯 + WBI 快照头（本文整理）
+
+本仓库给出的是这三个问题的**机制答案与验证数据**，
+不是「一键救砖工具」——因为救砖的最后一公里（fastboot 写入 + 防砖保护）
+依赖的硬件工具链仍在准备中。
+
+> 详细路线见 [docs/04-rescue-plan.md](docs/04-rescue-plan.md)（分级 R0–R4）
+> 与 [docs/08-rollback-and-ei-rampatch.md](docs/08-rollback-and-ei-rampatch.md)（回滚阶梯 + 防砖第一道闸）。
+
+## 救砖思路的三条主线
+
+### 主线 1：识别层不验签 —— 让相机「看见」你的固件
+
+```
+识别层  appFw.so     读 FdatHeader[32:34] 决定是否提示更新    ← 不验 RSA
+执行层  nflasha1     updater 验 RSA-2048 后才写 flash        ← 验 RSA
+```
+
+**实测**：改 `versionMinor`（`0x00 → 0x01`）并重算全部可算校验后，
+A6700（2.00）真机弹出了「**2.00 → 2.01**」的更新提示。
+RSA 签名必然失效（无私钥），但识别层根本不看签名。
+
+**这是救砖的基础**：只要能让相机「走到更新流程」，就有机会写回固件。
+
+### 主线 2：版本号可以重算 —— 降级不被拦
+
+索尼的更新链会做「新版本 > 当前版本」比较。但版本号就在
+`FdatHeader[32:33]`（`versionMinor` / `versionMajor`），
+而它受保护的三道校验（header CRC32 / L3 帧 / DEND CRC32）**全部可离线重算**。
+
+**实测**：v2.00 → v2.01 重打包后，L0/L1/L2/L3 全层 `PASS`，
+字节差异只有 2 个 4096 块（文件头 + DEND 区）。
+
+**这意味着**：如果相机被刷到高版本又需要降级，
+理论上可以构造一个「版本号更高但内容是旧版」的包 ——
+**只要执行层的 RSA 能过**。而执行层 RSA 过不了，所以这条路用于「识别」而非「执行」。
+
+### 主线 3：WBI 快照是双刃剑 —— 既是保护也是障碍
+
+`nflasha5` 的前 512 B 是**启动快照头**（`WBI2` magic，1314 sections）：
+
+| 状态 | 行为 | 对救砖的意义 |
+|---|---|---|
+| 快照有效 | 按「上次已知良好」加载 | ✅ 防砖（改坏了能回退） |
+| 快照清零 | 按文件里的新布局加载 | ⚠️ 才能让改动生效，但也失去保护 |
+
+**实测数据**（来自社区工具链 `Hxy-FireHydrant` 的模块）：
+- `wbi rewrite`（写回原样 512 B）→ `verify=OK` 才说明**写通道可用**
+- `wbi clear`（备份 + 清零）→ 改完必须**拔电池冷启动**
+- `wbi restore`（写回备份）→ 恢复旧快照
+
+**防砖第一道闸：`wbi rewrite` 的写通道自检。**
+如果连原样数据都写不进去，任何改动都不要做。
+
+### 救砖分级（当前状态）
+
+| 级别 | 手段 | 需要 | 状态 |
+|---|---|---|---|
+| **R0** | SD 卡放官方包重新更新 | 相机能启动 | ✅ 可行 |
+| **R1** | `up.sh ver` / `modver` | 相机 shell | ⚠️ 只影响识别层 |
+| **R2** | fastboot 写 WBI 头 / 反向写 AP | USB 服务通道 + 工具链 | ❌ **工具在路上** |
+| **R3** | 官方恢复包 | 索尼支持 | ✅ 兜底 |
+| **R4** | 返厂 | — | ✅ 最后手段 |
+
+**R2 是本文最有价值的部分**，也是**唯一还没跑通的部分** ——
+因为 fastboot 工具只有读命令（`oem partition dump`），没有写命令。
+
+> ⚠️ **免责声明 / Disclaimer**
+>
+> 本仓库是**逆向研究记录**，不是固件修改工具，也不是维修服务。
+>
+> - **不含**索尼固件、解密后的分区镜像、私钥或任何刷写工具
+> - **不提供**刷机、降级或解锁任何相机的操作指引
+> - 所有结论来自**对官方更新包的离线分析**与**对设备的只读查询**
+> - 任何修改尝试都有变砖与失去保修的真实风险，作者不为此类后果承担责任
+> - 商标与固件版权归索尼集团所有
+>
+> This repository is a **reverse-engineering research record**, not a firmware
+> modification tool and not a repair service. It contains no Sony firmware,
+> no decrypted partition images, no private keys, and no flashing tools. It
+> does not provide instructions to flash, downgrade, or unlock any camera.
+> All observations come from offline analysis of officially distributed
+> update packages and from read-only device queries. Any modification attempt
+> carries a real risk of bricking the device; the authors assume no liability.
+> Trademarks and firmware copyrights belong to Sony Group Corporation.
+
+---
+
+## 文档导航 / Documentation
+
+| 文档 | 内容 |
+|---|---|
+| [docs/01-container.md](docs/01-container.md) | UFU 容器与记录链 |
+| [docs/02-crypto.md](docs/02-crypto.md) | 第四代 AesCbcCrypter |
+| [docs/03-integrity.md](docs/03-integrity.md) | 三层校验（L1/L2/L3） |
+| [docs/04-rescue-plan.md](docs/04-rescue-plan.md) | 救砖分级 R0–R4 |
+| [docs/05-cxd90045-vs-cxd90057.md](docs/05-cxd90045-vs-cxd90057.md) | 两代机制演进 |
+| [docs/06-rescue-and-ei.md](docs/06-rescue-and-ei.md) | fastboot 回滚思路、EI 补丁表 |
+| [docs/07-platform-crossvalidation.md](docs/07-platform-crossvalidation.md) | 三平台对照（CXD90045 / CXD90057 / FX30 BK4） |
+| [docs/08-rollback-and-ei-rampatch.md](docs/08-rollback-and-ei-rampatch.md) | 回滚阶梯、EI 的 RAM 补丁路径 |
+| [docs/09-ap-mechanism.md](docs/09-ap-mechanism.md) | AP 机制、Powerful 实证、机型差异 |
+| [docs/evidence/](docs/evidence/) | 真机验证照片与说明 |
+| [HANDOFF.md](HANDOFF.md) | 项目交接记录（含未完成事项） |
+| [GITHUB_RELEASE_PLAN.md](GITHUB_RELEASE_PLAN.md) | 本仓库的开源发布方案 |
 
 ---
 
