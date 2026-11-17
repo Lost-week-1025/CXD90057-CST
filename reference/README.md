@@ -20,7 +20,7 @@
 ../_ref/
   sony-a6400-research/      # MIT，可自由参考
   A6400-Extra-Menu/         # 非商业，阅读参考
-  a6400-devc-rash-day/      # 无授权，仅本地研究，切勿传播
+  a6400-devc-rash-day/      # 非商业，阅读参考
 ```
 
 ## 引用到的公开密钥
